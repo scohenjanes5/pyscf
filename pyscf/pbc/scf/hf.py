@@ -410,25 +410,7 @@ def _dip_correction(mf):
     # Compute rho in blocks to avoid allocating full grids.coords
     ni = numint.NumInt()
     ngrids = np.prod(grids.mesh)
-    rho = np.empty(ngrids)
-    
-    mesh = grids.mesh
-    freqs = [np.fft.fftfreq(x) for x in mesh]
-    blksize = min(ngrids, 8000)
-    for p0, p1 in lib.prange(0, ngrids, blksize):
-        # Generate grid coordinates for this block
-        idx = np.arange(p0, p1)
-        ix, iy, iz = np.unravel_index(idx, mesh)
-
-        qv = np.zeros((len(idx), 3))
-        qv[:,0] = freqs[0][ix]
-        qv[:,1] = freqs[1][iy]
-        qv[:,2] = freqs[2][iz]
-        
-        coords_blk = np.dot(qv, a)
-        
-        ao = ni.eval_ao(cell, coords_blk, mf.kpt)
-        rho[p0:p1] = ni.eval_rho(cell, ao, dm, xctype='LDA')
+    rho = mf.get_rho(dm, grids)
 
     origin = _search_dipole_gauge_origin(cell, grids, rho, log)
 
@@ -458,27 +440,18 @@ def _dip_correction(mf):
     de_mono = - chg**2 * np.array(madelung) / (2 * L * epsilon)
 
     # dipole energy correction
-    # Block loop for integrals
     e_dip = np.zeros(3)
     e_quad = 0.0
     
-    weight = vol / ngrids
-    
-    for p0, p1 in lib.prange(0, ngrids, blksize):
-        idx = np.arange(p0, p1)
-        ix, iy, iz = np.unravel_index(idx, mesh)
+    # Use NumInt block_loop to iterate over grids without full allocation
+    p1 = 0
+    for ao, ao_k2, mask, weight, coords in ni.block_loop(cell, grids, nao=1):
+        p0, p1 = p1, p1 + weight.size
+        r_e = shift_grids(coords)
+        rho_blk = rho[p0:p1]
         
-        qv = np.zeros((len(idx), 3))
-        qv[:,0] = freqs[0][ix]
-        qv[:,1] = freqs[1][iy]
-        qv[:,2] = freqs[2][iz]
-        
-        coords_blk = np.dot(qv, a)
-        r_e = shift_grids(coords_blk)
-        
-        e_dip += np.einsum('g,gx->x', rho[p0:p1], r_e) * weight
-        e_quad += np.einsum('g,gx,gx->', rho[p0:p1], r_e, r_e) * weight
-        
+        e_dip += np.einsum('g,g,gx->x', rho_blk, weight, r_e)
+        e_quad += np.einsum('g,g,gx,gx->', rho_blk, weight, r_e, r_e)
 
     r_nuc = shift_grids(cell.atom_coords())
     charges = cell.atom_charges()

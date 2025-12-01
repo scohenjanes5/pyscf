@@ -25,7 +25,7 @@ from pyscf.dft.numint import eval_mat, _dot_ao_ao, _dot_ao_dm, _tau_dot
 from pyscf.dft.numint import _scale_ao, _contract_rho
 from pyscf.dft.numint import OCCDROP
 from pyscf.dft.gen_grid import NBINS, CUTOFF, ALIGNMENT_UNIT
-from pyscf.pbc.dft.gen_grid import make_mask, BLKSIZE
+from pyscf.pbc.dft.gen_grid import make_mask, BLKSIZE, UniformGrids
 from pyscf.pbc.lib.kpts_helper import is_zero, KPT_DIFF_TOL
 from pyscf.pbc.lib.kpts import KPoints
 
@@ -1058,14 +1058,22 @@ class NumInt(lib.StreamObject, numint.LibXCMixin):
                    kpts_band=None, max_memory=2000, non0tab=None, blksize=None):
         '''Define this macro to loop over grids by blocks.
         '''
-        # For UniformGrids, grids.coords does not indicate whehter grids are initialized
+        # For UniformGrids, grids.coords does not indicate whether grids are initialized
         if grids.non0tab is None:
             grids.build(with_non0tab=True)
         if nao is None:
             nao = cell.nao
-        grids_coords = grids.coords
-        grids_weights = grids.weights
-        ngrids = grids_coords.shape[0]
+        if isinstance(grids, UniformGrids):
+            grids_coords = None
+            ngrids = numpy.prod(grids.mesh)
+            grids_weights = numpy.empty(ngrids)
+            grids_weights[:] = cell.vol / ngrids
+            freqs = [numpy.fft.fftfreq(x) for x in grids.mesh]
+        else:
+            grids_coords = grids.coords
+            grids_weights = grids.weights
+            ngrids = grids_coords.shape[0]
+
         comp = (deriv+1)*(deriv+2)*(deriv+3)//6
         # NOTE to index grids.non0tab, blksize needs to be integer multiplier of BLKSIZE
         if blksize is None:
@@ -1091,7 +1099,17 @@ class NumInt(lib.StreamObject, numint.LibXCMixin):
 
         for ip0 in range(0, ngrids, blksize):
             ip1 = min(ngrids, ip0+blksize)
-            coords = grids_coords[ip0:ip1]
+            if grids_coords is None:
+                # Generate coordinates on the fly
+                idx = numpy.arange(ip0, ip1)
+                ix, iy, iz = numpy.unravel_index(idx, grids.mesh)
+                qv = numpy.zeros((len(idx), 3))
+                qv[:,0] = freqs[0][ix]
+                qv[:,1] = freqs[1][iy]
+                qv[:,2] = freqs[2][iz]
+                coords = numpy.dot(qv, cell.lattice_vectors())
+            else:
+                coords = grids_coords[ip0:ip1]
             weight = grids_weights[ip0:ip1]
             non0 = non0tab[ip0//BLKSIZE:]
             ao_k2 = self.eval_ao(cell, coords, kpt2, deriv=deriv, non0tab=non0,
