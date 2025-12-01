@@ -409,7 +409,6 @@ def _dip_correction(mf):
 
     # Compute rho in blocks to avoid allocating full grids.coords
     ni = numint.NumInt()
-    ngrids = np.prod(grids.mesh)
     rho = mf.get_rho(dm, grids)
 
     origin = _search_dipole_gauge_origin(cell, grids, rho, log)
