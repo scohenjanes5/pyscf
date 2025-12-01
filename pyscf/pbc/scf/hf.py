@@ -405,7 +405,7 @@ def _dip_correction(mf):
     dm = mf.make_rdm1()
     if dm[0].ndim == 2:  # Unrestricted density matrix
         dm = dm[0] + dm[1]
-    
+
 
     # Compute rho in blocks to avoid allocating full grids.coords
     ni = numint.NumInt()
@@ -441,20 +441,20 @@ def _dip_correction(mf):
     # dipole energy correction
     e_dip = np.zeros(3)
     e_quad = 0.0
-    
+
     # Use NumInt block_loop to iterate over grids without full allocation
     p1 = 0
     for ao, ao_k2, mask, weight, coords in ni.block_loop(cell, grids, nao=1):
         p0, p1 = p1, p1 + weight.size
         r_e = shift_grids(coords)
         rho_blk = rho[p0:p1]
-        
+
         e_dip += np.einsum('g,g,gx->x', rho_blk, weight, r_e)
         e_quad += np.einsum('g,g,gx,gx->', rho_blk, weight, r_e, r_e)
 
     r_nuc = shift_grids(cell.atom_coords())
     charges = cell.atom_charges()
-    
+
     nuc_dip = np.einsum('g,gx->x', charges, r_nuc)
     dip = nuc_dip - e_dip
     de_dip = -2.*np.pi/(3*cell.vol) * np.linalg.norm(dip)**2
@@ -464,7 +464,7 @@ def _dip_correction(mf):
         logger.warn(mf, 'System is not cubic cell. Quadrupole energy '
                     'correction is inaccurate since it is developed based on '
                     'cubic cell.')
-    
+
     nuc_quad = np.einsum('g,gx,gx->', charges, r_nuc, r_nuc)
     quad = nuc_quad - e_quad
     de_quad = 2.*np.pi/(3*cell.vol) * quad
