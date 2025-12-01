@@ -392,6 +392,7 @@ def _dip_correction(mf):
     '''Makov-Payne corrections for charged systems.'''
     from pyscf.pbc import tools
     from pyscf.pbc.dft import gen_grid
+    from pyscf.pbc.dft import numint
     log = logger.new_logger(mf)
     cell = mf.cell
     a = cell.lattice_vectors()
@@ -402,7 +403,33 @@ def _dip_correction(mf):
     grids.mesh = tools.cutoff_to_mesh(a, ke_cutoff)
 
     dm = mf.make_rdm1()
-    rho = mf.get_rho(dm, grids)
+    if dm[0].ndim == 2:  # Unrestricted density matrix
+        dm = dm[0] + dm[1]
+    
+
+    # Compute rho in blocks to avoid allocating full grids.coords
+    ni = numint.NumInt()
+    ngrids = np.prod(grids.mesh)
+    rho = np.empty(ngrids)
+    
+    mesh = grids.mesh
+    freqs = [np.fft.fftfreq(x) for x in mesh]
+    blksize = min(ngrids, 8000)
+    for p0, p1 in lib.prange(0, ngrids, blksize):
+        # Generate grid coordinates for this block
+        idx = np.arange(p0, p1)
+        ix, iy, iz = np.unravel_index(idx, mesh)
+
+        qv = np.zeros((len(idx), 3))
+        qv[:,0] = freqs[0][ix]
+        qv[:,1] = freqs[1][iy]
+        qv[:,2] = freqs[2][iz]
+        
+        coords_blk = np.dot(qv, a)
+        
+        ao = ni.eval_ao(cell, coords_blk, mf.kpt)
+        rho[p0:p1] = ni.eval_rho(cell, ao, dm, xctype='LDA')
+
     origin = _search_dipole_gauge_origin(cell, grids, rho, log)
 
     def shift_grids(r):
@@ -431,10 +458,31 @@ def _dip_correction(mf):
     de_mono = - chg**2 * np.array(madelung) / (2 * L * epsilon)
 
     # dipole energy correction
-    r_e = shift_grids(grids.coords)
+    # Block loop for integrals
+    e_dip = np.zeros(3)
+    e_quad = 0.0
+    
+    weight = vol / ngrids
+    
+    for p0, p1 in lib.prange(0, ngrids, blksize):
+        idx = np.arange(p0, p1)
+        ix, iy, iz = np.unravel_index(idx, mesh)
+        
+        qv = np.zeros((len(idx), 3))
+        qv[:,0] = freqs[0][ix]
+        qv[:,1] = freqs[1][iy]
+        qv[:,2] = freqs[2][iz]
+        
+        coords_blk = np.dot(qv, a)
+        r_e = shift_grids(coords_blk)
+        
+        e_dip += np.einsum('g,gx->x', rho[p0:p1], r_e) * weight
+        e_quad += np.einsum('g,gx,gx->', rho[p0:p1], r_e, r_e) * weight
+        
+
     r_nuc = shift_grids(cell.atom_coords())
     charges = cell.atom_charges()
-    e_dip = np.einsum('g,g,gx->x', rho, grids.weights, r_e)
+    
     nuc_dip = np.einsum('g,gx->x', charges, r_nuc)
     dip = nuc_dip - e_dip
     de_dip = -2.*np.pi/(3*cell.vol) * np.linalg.norm(dip)**2
@@ -444,7 +492,7 @@ def _dip_correction(mf):
         logger.warn(mf, 'System is not cubic cell. Quadrupole energy '
                     'correction is inaccurate since it is developed based on '
                     'cubic cell.')
-    e_quad = np.einsum('g,g,gx,gx->', rho, grids.weights, r_e, r_e)
+    
     nuc_quad = np.einsum('g,gx,gx->', charges, r_nuc, r_nuc)
     quad = nuc_quad - e_quad
     de_quad = 2.*np.pi/(3*cell.vol) * quad
