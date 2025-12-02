@@ -393,6 +393,7 @@ def _dip_correction(mf):
     from pyscf.pbc import tools
     from pyscf.pbc.dft import gen_grid
     from pyscf.pbc.dft import numint
+    ni = numint.NumInt()
     log = logger.new_logger(mf)
     cell = mf.cell
     a = cell.lattice_vectors()
@@ -403,14 +404,7 @@ def _dip_correction(mf):
     grids.mesh = tools.cutoff_to_mesh(a, ke_cutoff)
 
     dm = mf.make_rdm1()
-    if dm[0].ndim == 2:  # Unrestricted density matrix
-        dm = dm[0] + dm[1]
-
-
-    # Compute rho in blocks to avoid allocating full grids.coords
-    ni = numint.NumInt()
     rho = mf.get_rho(dm, grids)
-
     origin = _search_dipole_gauge_origin(cell, grids, rho, log)
 
     def shift_grids(r):
