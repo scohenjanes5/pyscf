@@ -1063,7 +1063,7 @@ class NumInt(lib.StreamObject, numint.LibXCMixin):
             grids.build(with_non0tab=True)
         if nao is None:
             nao = cell.nao
-        if isinstance(grids, UniformGrids):
+        if isinstance(grids, UniformGrids) and grids._coords is None:
             grids_coords = None
             ngrids = numpy.prod(grids.mesh)
             grids_weights = numpy.empty(ngrids)
