@@ -948,7 +948,7 @@ def cache_xc_kernel1(ni, cell, grids, xc_code, dm, spin=0,
     return rho, vxc, fxc
 
 
-def get_rho(ni, cell, dm, grids, kpts=None, max_memory=2000):
+def get_rho(ni, cell, dm, grids, kpts=None, max_memory=2000, as_generator=False):
     '''Density in real space
     '''
     if kpts is None:
@@ -962,13 +962,24 @@ def get_rho(ni, cell, dm, grids, kpts=None, max_memory=2000):
     hermi = 1
     make_rho, nset, nao = ni._gen_rho_evaluator(cell, dm, hermi, False)
     assert nset == 1
-    rho = numpy.empty(grids.weights.size)
-    p1 = 0
-    for ao_k1, ao_k2, mask, weight, coords \
-            in ni.block_loop(cell, grids, nao, 0, kpts, None, max_memory):
-        p0, p1 = p1, p1 + weight.size
-        rho[p0:p1] = make_rho(0, ao_k1, mask, 'LDA')
-    return rho
+    
+    if as_generator:
+        def rho_generator():
+            p1 = 0
+            for ao_k1, ao_k2, mask, weight, coords \
+                    in ni.block_loop(cell, grids, nao, 0, kpts, None, max_memory):
+                p0, p1 = p1, p1 + weight.size
+                rho_block = make_rho(0, ao_k1, mask, 'LDA')
+                yield p0, p1, rho_block
+        return rho_generator()
+    else:
+        rho = numpy.empty(grids.weights.size)
+        p1 = 0
+        for ao_k1, ao_k2, mask, weight, coords \
+                in ni.block_loop(cell, grids, nao, 0, kpts, None, max_memory):
+            p0, p1 = p1, p1 + weight.size
+            rho[p0:p1] = make_rho(0, ao_k1, mask, 'LDA')
+        return rho
 
 
 class NumInt(lib.StreamObject, numint.LibXCMixin):

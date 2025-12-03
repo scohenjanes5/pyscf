@@ -135,13 +135,13 @@ def prune_small_rho_grids_(ks, cell, dm, grids, kpts):
     return grids
 
 @lib.with_doc(pbchf.get_rho.__doc__)
-def get_rho(mf, dm=None, grids=None, kpt=None):
+def get_rho(mf, dm=None, grids=None, kpt=None, as_generator=False):
     if dm is None: dm = mf.make_rdm1()
     if grids is None: grids = mf.grids
     if kpt is None: kpt = mf.kpt
     if dm[0].ndim == 2:  # the UKS density matrix
         dm = dm[0] + dm[1]
-    return mf._numint.get_rho(mf.cell, dm, grids, kpt, mf.max_memory)
+    return mf._numint.get_rho(mf.cell, dm, grids, kpt, mf.max_memory, as_generator=as_generator)
 
 def gen_response(mf, mo_coeff=None, mo_occ=None,
                  singlet=None, hermi=0, max_memory=None, with_nlc=True):

@@ -105,13 +105,13 @@ def get_veff(ks, cell=None, dm=None, dm_last=0, vhf_last=0, hermi=1,
     return vxc
 
 @lib.with_doc(khf.get_rho.__doc__)
-def get_rho(mf, dm=None, grids=None, kpts=None):
+def get_rho(mf, dm=None, grids=None, kpts=None, as_generator=False):
     if dm is None: dm = mf.make_rdm1()
     if grids is None: grids = mf.grids
     if kpts is None: kpts = mf.kpts
     if dm[0].ndim == 3:  # the KUKS density matrix
         dm = dm[0] + dm[1]
-    return mf._numint.get_rho(mf.cell, dm, grids, kpts, mf.max_memory)
+    return mf._numint.get_rho(mf.cell, dm, grids, kpts, mf.max_memory, as_generator=as_generator)
 
 def energy_elec(mf, dm_kpts=None, h1e_kpts=None, vhf=None):
     if h1e_kpts is None: h1e_kpts = mf.get_hcore(mf.cell, mf.kpts)

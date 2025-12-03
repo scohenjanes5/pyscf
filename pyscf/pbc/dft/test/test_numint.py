@@ -378,6 +378,29 @@ class KnownValues(unittest.TestCase):
         rho1 = numint.get_rho(ni, cell, dm, grids)
         self.assertAlmostEqual(abs(rho - rho1).max(), 0, 8)
 
+    def test_get_rho_generator(self):
+        cell = pbcgto.Cell()
+        cell.a = '3 0 0; 0 3 0; 0 0 3'
+        cell.unit = 'B'
+        cell.atom = 'He     1.    0.       1.'
+        cell.basis = {'He': '321g'}
+        cell.verbose = 0
+        cell.mesh = [20,20,20]
+        cell.build()
+        grids = gen_grid.UniformGrids(cell)
+        grids.build()
+        numpy.random.seed(10)
+        nao = cell.nao_nr()
+        dm = numpy.random.random((nao,nao))
+        dm = dm + dm.T
+        ni = numint.NumInt()
+        
+        rho_full = ni.get_rho(cell, dm, grids, as_generator=False)
+        rho_gen = ni.get_rho(cell, dm, grids, as_generator=True)
+        rho_from_gen = np.concatenate([rho_blk for _, _, rho_blk in rho_gen])
+        
+        self.assertTrue(np.allclose(rho_full, rho_from_gen, rtol=1e-12, atol=1e-12))
+
     def test_nr_uks_vxc_vv10(self):
         cell = pbcgto.Cell()
         cell.verbose = 5

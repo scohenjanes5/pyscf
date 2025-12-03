@@ -277,102 +277,148 @@ def _search_dipole_gauge_origin(cell, grids, rho, log):
     coordinates of the center of the unit cell.
     '''
     from pyscf.pbc.dft import gen_grid
+    import types
+    
     a = cell.lattice_vectors()
     b = np.linalg.inv(a).T
     charges = cell.atom_charges()
     coords  = cell.atom_coords()
-    nelec = np.dot(rho, grids.weights)
-
-    # The dipole moment in the crystal is not uniquely defined. Depending on
-    # the position and the shape of the unit cell, the value of dipole moment
-    # can be very different. The optimization below searches the origin of a
-    # cell inside which the nuclear charge center and electron density charge
-    # center locate at the same point.
-    if (cell.dimension == 3 and
-        # For orthogonal lattice only
-        abs(np.diag(a.diagonal())).max() and
-        isinstance(grids, gen_grid.UniformGrids)):
-
-        r_nuc_frac = coords.dot(b.T)
-        grid_frac = [np.fft.fftfreq(x) for x in grids.mesh]
-        wxyz = grids.weights.reshape(grids.mesh)
-        rhoxyz = rho.reshape(grids.mesh)
-
-        def search_orig(ix):
-            nx = grids.mesh[ix]
-            den = np.einsum('xyz,xyz->'+('xyz'[ix]), rhoxyz, wxyz)
-
-            nuc_x = r_nuc_frac[:,ix]
-            grid_x = grid_frac[ix]
-            # possible origin of the unit cell
-            possible_orig = grid_x
-
-            # shifts the unit cell
-            possible_x = grid_x - possible_orig[:,None]
-            possible_x[possible_x < 0] += 1
-            possible_nuc_x = nuc_x - possible_orig[:,None]
-            possible_nuc_x[possible_nuc_x < 0] += 1
-
-            # Handle the grids on the edge of a unit cell.
-            possible_nuc_x[possible_nuc_x==0] = .5
-            possible_nuc_x[possible_nuc_x==1] = .5
-            possible_x[possible_x==0] = .5
-            possible_x[possible_x==1] = .5
-
-            # dip in fractional coordinates
-            dip  = np.einsum('sx,x->s', possible_nuc_x, charges)
-            dip -= np.einsum('sx,x->s', possible_x, den)
-            # Put the net charge at the center of the unit cell
-            dip -= .5 * (charges.sum() - nelec)
-
-            idx = abs(dip).argmin()
-            dip_min = dip[idx]
-
-            if abs(dip_min) > 1e-4:
-                dip_nearest1 = dip[idx-1]
-                dip_nearest2 = dip[(idx+1)%nx]
-                if dip_nearest1 * dip_nearest2 > 0:
-                    if dip_nearest1 * dip_min > dip_nearest2 * dip_min:
-                        idx_nearest = idx - 1
-                    else:
-                        idx_nearest = idx + 1
-                else:
-                    if dip_nearest1 * dip_min < dip_nearest2 * dip_min:
-                        idx_nearest = idx - 1
-                    else:
-                        idx_nearest = idx + 1
-
-                dip_nearest = dip[idx_nearest%nx]
-                if dip_nearest * dip_min < 0:
-                    # extrapolation
-                    idx = (idx_nearest*dip_min-idx*dip_nearest) / (dip_min-dip_nearest)
-
-            # wraparound
-            if idx >= nx // 2:
-                idx -= nx
-            shift = idx / nx * a[ix]
-            return shift
-
-        orig_x = search_orig(0)
-        orig_y = search_orig(1)
-        orig_z = search_orig(2)
-        origin = orig_x + orig_y + orig_z
-        log.debug1('optimized cell origin = %s', origin)
-        log.debug1('  origin_x %s', orig_x)
-        log.debug1('  origin_y %s', orig_y)
-        log.debug1('  origin_z %s', orig_z)
-        center = origin + .5 * a.sum(axis=0)
-        log.debug1('gauge origin = %s', center)
-    else:
+    
+    is_generator = isinstance(rho, types.GeneratorType)
+    
+    # Check if we can do the optimization
+    can_optimize = (cell.dimension == 3 and
+                    abs(np.diag(a.diagonal())).max() and
+                    isinstance(grids, gen_grid.UniformGrids))
+    
+    if not can_optimize:
         # If the grids are non-cubic grids, regenerating the grids is expensive if
         # the position or the shape of the unit cell is changed. The position of
         # the unit cell is not optimized. The gauge origin is set to the nuclear
         # charge center of the original unit cell.
         center = np.einsum('i,ix->x', charges, coords) / charges.sum()
+        return center
+    
+    # The dipole moment in the crystal is not uniquely defined. Depending on
+    # the position and the shape of the unit cell, the value of dipole moment
+    # can be very different. The optimization below searches the origin of a
+    # cell inside which the nuclear charge center and electron density charge
+    # center locate at the same point.
+    if is_generator:
+        # Compute projections from generator blocks without materializing full array
+        nx, ny, nz = grids.mesh
+        ngrids = np.prod(grids.mesh)
+        
+        # Initialize weighted density projections for each axis
+        proj_x = np.zeros(nx)
+        proj_y = np.zeros(ny)
+        proj_z = np.zeros(nz)
+        nelec = 0.0
+        
+        # Accumulate projections from generator blocks
+        for p0, p1, rho_block in rho:
+            # Get 3D indices for this block
+            idx = np.arange(p0, p1)
+            ix, iy, iz = np.unravel_index(idx, grids.mesh)
+            
+            # Get weights for this block
+            weight_block = grids.weights[p0:p1]
+            weighted_rho = rho_block * weight_block
+            
+            # Accumulate projections
+            np.add.at(proj_x, ix, weighted_rho)
+            np.add.at(proj_y, iy, weighted_rho)
+            np.add.at(proj_z, iz, weighted_rho)
+            
+            # Accumulate nelec
+            nelec += np.sum(weighted_rho)
+        
+        # Now we have projections, use them for optimization
+        den_x = proj_x
+        den_y = proj_y
+        den_z = proj_z
+    else:
+        # Original path: rho is full array
+        nelec = np.dot(rho, grids.weights)
+        wxyz = grids.weights.reshape(grids.mesh)
+        rhoxyz = rho.reshape(grids.mesh)
+        
+        # Compute projections
+        den_x = np.einsum('xyz,xyz->x', rhoxyz, wxyz)
+        den_y = np.einsum('xyz,xyz->y', rhoxyz, wxyz)
+        den_z = np.einsum('xyz,xyz->z', rhoxyz, wxyz)
+
+    r_nuc_frac = coords.dot(b.T)
+    grid_frac = [np.fft.fftfreq(x) for x in grids.mesh]
+
+    def search_orig(ix, den):
+        nx = grids.mesh[ix]
+        nuc_x = r_nuc_frac[:,ix]
+        grid_x = grid_frac[ix]
+        
+        # possible origin of the unit cell
+        possible_orig = grid_x
+
+        # shifts the unit cell
+        possible_x = grid_x - possible_orig[:,None]
+        possible_x[possible_x < 0] += 1
+        possible_nuc_x = nuc_x - possible_orig[:,None]
+        possible_nuc_x[possible_nuc_x < 0] += 1
+
+        # Handle the grids on the edge of a unit cell.
+        possible_nuc_x[possible_nuc_x==0] = .5
+        possible_nuc_x[possible_nuc_x==1] = .5
+        possible_x[possible_x==0] = .5
+        possible_x[possible_x==1] = .5
+
+        # dip in fractional coordinates
+        dip  = np.einsum('sx,x->s', possible_nuc_x, charges)
+        dip -= np.einsum('sx,x->s', possible_x, den)
+        # Put the net charge at the center of the unit cell
+        dip -= .5 * (charges.sum() - nelec)
+
+        idx = abs(dip).argmin()
+        dip_min = dip[idx]
+
+        if abs(dip_min) > 1e-4:
+            dip_nearest1 = dip[idx-1]
+            dip_nearest2 = dip[(idx+1)%nx]
+            if dip_nearest1 * dip_nearest2 > 0:
+                if dip_nearest1 * dip_min > dip_nearest2 * dip_min:
+                    idx_nearest = idx - 1
+                else:
+                    idx_nearest = idx + 1
+            else:
+                if dip_nearest1 * dip_min < dip_nearest2 * dip_min:
+                    idx_nearest = idx - 1
+                else:
+                    idx_nearest = idx + 1
+
+            dip_nearest = dip[idx_nearest%nx]
+            if dip_nearest * dip_min < 0:
+                # extrapolation
+                idx = (idx_nearest*dip_min-idx*dip_nearest) / (dip_min-dip_nearest)
+
+        # wraparound
+        if idx >= nx // 2:
+            idx -= nx
+        shift = idx / nx * a[ix]
+        return shift
+
+    orig_x = search_orig(0, den_x)
+    orig_y = search_orig(1, den_y)
+    orig_z = search_orig(2, den_z)
+    origin = orig_x + orig_y + orig_z
+    log.debug1('optimized cell origin = %s', origin)
+    log.debug1('  origin_x %s', orig_x)
+    log.debug1('  origin_y %s', orig_y)
+    log.debug1('  origin_z %s', orig_z)
+    center = origin + .5 * a.sum(axis=0)
+    log.debug1('gauge origin = %s', center)
 
     return center
 
-def get_rho(mf, dm=None, grids=None, kpt=None):
+def get_rho(mf, dm=None, grids=None, kpt=None, as_generator=False):
     '''Compute density in real space
     '''
     from pyscf.pbc.dft import gen_grid
@@ -386,7 +432,7 @@ def get_rho(mf, dm=None, grids=None, kpt=None):
     if kpt is None:
         kpt = mf.kpt
     ni = numint.NumInt()
-    return ni.get_rho(mf.cell, dm, grids, kpt, mf.max_memory)
+    return ni.get_rho(mf.cell, dm, grids, kpt, mf.max_memory, as_generator=as_generator)
 
 def _dip_correction(mf):
     '''Makov-Payne corrections for charged systems.'''
@@ -404,8 +450,8 @@ def _dip_correction(mf):
     grids.mesh = tools.cutoff_to_mesh(a, ke_cutoff)
 
     dm = mf.make_rdm1()
-    rho = mf.get_rho(dm, grids)
-    origin = _search_dipole_gauge_origin(cell, grids, rho, log)
+    rho_gen = mf.get_rho(dm, grids, as_generator=True)
+    origin = _search_dipole_gauge_origin(cell, grids, rho_gen, log)
 
     def shift_grids(r):
         r_frac = lib.dot(r - origin, b.T)
@@ -436,12 +482,15 @@ def _dip_correction(mf):
     e_dip = np.zeros(3)
     e_quad = 0.0
 
-    # Use NumInt block_loop to iterate over grids without full allocation
     p1 = 0
-    for ao, ao_k2, mask, weight, coords in ni.block_loop(cell, grids, nao=1):
+    make_rho, nset, nao = ni._gen_rho_evaluator(cell, dm, hermi=1, with_lapl=False)
+    assert nset == 1
+    kpt = mf.kpt
+    for ao, ao_k2, mask, weight, coords in ni.block_loop(cell, grids, nao=nao, deriv=0, 
+                                                          kpt=kpt, max_memory=mf.max_memory):
         p0, p1 = p1, p1 + weight.size
+        rho_blk = make_rho(0, ao, mask, 'LDA')
         r_e = shift_grids(coords)
-        rho_blk = rho[p0:p1]
 
         e_dip += np.einsum('g,g,gx->x', rho_blk, weight, r_e)
         e_quad += np.einsum('g,g,gx,gx->', rho_blk, weight, r_e, r_e)
