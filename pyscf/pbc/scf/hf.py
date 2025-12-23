@@ -776,8 +776,8 @@ class SCF(mol_hf.SCF):
         '''Hook for dumping results and clearing up the object.'''
         mol_hf.SCF._finalize(self)
 
-        if self.cell.charge != 0:
-            makov_payne_correction(self)
+        #if self.cell.charge != 0:
+        #    makov_payne_correction(self)
         return self
 
     def get_init_guess(self, cell=None, key='minao', s1e=None):
