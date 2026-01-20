@@ -56,7 +56,7 @@ def get_eri(mydf, kpts=None,
     q = kptj - kpti
     coulG = tools.get_coulG(cell, q, mesh=mydf.mesh)
     coords = cell.gen_uniform_grids(mydf.mesh)
-    max_memory = mydf.max_memory - lib.current_memory()[0]
+    max_memory = max(2000, mydf.max_memory - lib.current_memory()[0])
 
 ####################
 # gamma point, the integral is real and with s4 symmetry
@@ -120,7 +120,7 @@ def general(mydf, mo_coeffs, kpts=None,
     q = kptj - kpti
     coulG = tools.get_coulG(cell, q, mesh=mydf.mesh)
     coords = cell.gen_uniform_grids(mydf.mesh)
-    max_memory = mydf.max_memory - lib.current_memory()[0]
+    max_memory = max(2000, mydf.max_memory - lib.current_memory()[0])
 
     if gamma_point(kptijkl) and allreal:
         ao = mydf._numint.eval_ao(cell, coords, kpti)[0]
@@ -170,8 +170,11 @@ def _contract_compact(mydf, mos, coulG, max_memory):
         return out
 
     eri = numpy.empty((nmoi*(nmoi+1)//2,nmok*(nmok+1)//2))
+    # Ensure max_memory is positive to prevent negative blksize
+    max_memory = max(2000, max_memory)
     blksize = int(min(max(nmoi*(nmoi+1)//2, nmok*(nmok+1)//2),
                       (max_memory*1e6/8 - eri.size)/2/ngrids+1))
+    blksize = max(1, blksize)  # Extra safeguard
     buf = numpy.empty((blksize,ngrids))
     for p0, p1 in lib.prange_tril(0, nmoi, blksize):
         mo_pairs_G = tools.fft(fill_orbital_pair(moiT, p0, p1, buf), mydf.mesh)
