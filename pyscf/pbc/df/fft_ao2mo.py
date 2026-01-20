@@ -172,10 +172,18 @@ def _contract_compact(mydf, mos, coulG, max_memory):
     eri = numpy.empty((nmoi*(nmoi+1)//2,nmok*(nmok+1)//2))
     # Ensure max_memory is positive to prevent negative blksize
     max_memory = max(2000, max_memory)
-    blksize = int(min(max(nmoi*(nmoi+1)//2, nmok*(nmok+1)//2),
-                      (max_memory*1e6/8 - eri.size)/2/ngrids+1))
+    # Correct blksize calculation: number of pairs in a block is roughly nmoi * blksize.
+    # Buffer size is (max_npair, ngrids). max_npair ~ nmoi * blksize.
+    # So we need nmoi * blksize * ngrids * 8 bytes < max_memory
+    blksize = int((max_memory*1e6/8)/ngrids/nmoi)
+    blksize = max(1, blksize)
+    # blksize must also not exceed total number of rows
+    blksize = min(max(nmoi, nmok), blksize)
     blksize = max(1, blksize)  # Extra safeguard
-    buf = numpy.empty((blksize,ngrids))
+    # Buffer must be large enough to hold all pairs in the block.
+    # Max pairs roughly nmoi * blksize.
+    buf_size = nmoi * blksize
+    buf = numpy.empty((buf_size,ngrids))
     for p0, p1 in lib.prange_tril(0, nmoi, blksize):
         mo_pairs_G = tools.fft(fill_orbital_pair(moiT, p0, p1, buf), mydf.mesh)
         mo_pairs_G*= wcoulG
