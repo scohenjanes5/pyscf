@@ -87,6 +87,29 @@ class KnownValues(unittest.TestCase):
             grad_fd = (e[0] - e[1]) / (2 * disp)
             self.assertAlmostEqual(grad[ia,x] - grad_fd, 0, 7)
 
+    def test_pploc_nuc_grad_distant_atoms(self):
+        # Two NH3 40 Bohr apart. The PP of the second N must not be screened
+        # by the position of an AO shell of the first molecule.
+        nh3 = 'N 0 0 {0}; H 0 1.8 {1}; H 1.6 -0.9 {1}; H -1.6 -0.9 {1}'
+        mol = gto.M(atom=nh3.format(0.1, -0.6) + ';' + nh3.format(40.1, 39.4),
+                    basis='gth-szv', pseudo='gth-pade', unit='B', verbose=0)
+        np.random.seed(5)
+        dm = np.random.rand(mol.nao, mol.nao)
+        dm = dm + dm.T
+        grad = pp_int.vpploc_nuc_grad(mol, dm)
+
+        coords = mol.atom_coords()
+        disp = 1e-4
+        for ia, x in [(4, 2), (5, 1)]:
+            e = []
+            for sign in (1, -1):
+                c = coords.copy()
+                c[ia,x] += sign * disp
+                v = _get_pp_loc_part2(mol.set_geom_(c, unit='B', inplace=False))
+                e.append(np.einsum('ij,ij->', v, dm))
+            grad_fd = (e[0] - e[1]) / (2 * disp)
+            self.assertAlmostEqual(grad[ia,x] - grad_fd, 0, 7)
+
 def _get_pp_loc_part2(mol):
     '''The local part of get_gth_pp without the erf (part1) term'''
     from pyscf.df import incore

@@ -116,8 +116,10 @@ def vpploc_nuc_grad(mol, dm):
         fakecell = pp_int.fake_cell_vloc(mol, cn)
         fakecell.precision = 1e-8
         if fakecell.nbas > 0:
+            # int3c1e_nuc_grad looks up (fakecell shell, AO shell) pairs
             neighbor_list = build_neighbor_list_for_shlpairs(
-                as_cell, None, Ls, ish_rcut=rcut, jsh_rcut=rcut)
+                fakecell, as_cell, Ls, ish_rcut=rcut_by_shells(fakecell),
+                jsh_rcut=rcut)
             grad += int3c1e_nuc_grad(
                 as_cell, fakecell, dm, intors[cn], neighbor_list=neighbor_list)
             free_neighbor_list(neighbor_list)
