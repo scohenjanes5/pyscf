@@ -490,9 +490,13 @@ def vppnl_nuc_grad(cell, dm, kpts=None):
             ppnl_half_ip2[0][k] *= -1
 
     if gamma_point(kpts_lst):
+        # The C kernel differentiates the bra only and assumes a symmetric dm.
+        # Pass dm + dm.T (bra and ket) so that any dm is handled.
+        dm = numpy.asarray(dm).real
+        dm = dm + dm.swapaxes(-1, -2)
         grad = _contract_ppnl_nuc_grad(cell, fakecell, dm, hl_blocks,
                                        ppnl_half, ppnl_half_ip2, kpts=kpts)
-        grad *= -2
+        grad *= -1
         return grad
 
     nkpts = len(kpts_lst)

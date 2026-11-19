@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import unittest
+from unittest import mock
 import os
 import numpy as np
 import pyscf
@@ -283,6 +284,42 @@ He
         grad = pp_int.vppnl_nuc_grad(cell, dm)[1,2]
         grad_fd = np.einsum("ij,ij->", v_fd, dm)
         self.assertAlmostEqual(abs(grad - grad_fd), 0, 7)
+
+    def test_ppnl_nuc_grad_nonsymmetric_dm(self):
+        cell = pbcgto.Cell()
+        cell.atom = 'H 0 0 0; Na 0 0.2 0.8'
+        cell.a = np.diag([6,6,6])
+        cell.basis='gth-szv'
+        cell.pseudo='gth-pade'
+        cell.ke_cutoff=200
+        cell.build()
+
+        np.random.seed(2)
+        dm = np.random.rand(cell.nao, cell.nao)
+        grad = pp_int.vppnl_nuc_grad(cell, dm)
+
+        # The k-point code path evaluated at k=0 is a separate implementation
+        # (it already symmetrizes dm). gamma_point is patched so that the
+        # k-point branch is taken for a Gamma-point kpts.
+        with mock.patch.object(pp_int, 'gamma_point', return_value=False):
+            ref = pp_int.vppnl_nuc_grad(cell, dm[None], np.zeros((1,3)))
+        self.assertAlmostEqual(abs(grad - ref).max(), 0, 9)
+
+        # only the symmetric part of dm contributes
+        grad_sym = pp_int.vppnl_nuc_grad(cell, (dm + dm.T) / 2)
+        self.assertAlmostEqual(abs(grad - grad_sym).max(), 0, 9)
+
+        coords = cell.atom_coords()
+        disp = 1e-4
+        for ia, x in [(0, 0), (1, 1), (1, 2)]:
+            e = []
+            for sign in (1, -1):
+                c = coords.copy()
+                c[ia,x] += sign * disp
+                v = pp_int.get_pp_nl(cell.set_geom_(c, unit='B', inplace=False))
+                e.append(np.einsum('ij,ij->', v.real, dm))
+            grad_fd = (e[0] - e[1]) / (2 * disp)
+            self.assertAlmostEqual(grad[ia,x] - grad_fd, 0, 7)
 
     def test_pp_soc(self):
         np.random.seed(4)
