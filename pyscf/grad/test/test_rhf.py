@@ -288,6 +288,36 @@ class KnownValues(unittest.TestCase):
         e2 = numpy.einsum('ij,ij', dm, pp_int.get_gth_pp(mol))
         self.assertAlmostEqual(de[1, 2], (e1 - e2) / 2e-3, 6)
 
+    def test_gth_pp_hcore_generator(self):
+        # hcore_generator includes the local (erf and part2) and nonlocal PP
+        mol = gto.M(atom='N 0 0 0.1; H 0 1.8 -0.6; H 1.6 -0.9 -0.6; H -1.6 -0.9 -0.6',
+                    basis='gth-szv', pseudo='gth-pade', unit='B', verbose=0)
+        hcore_deriv = mol.RHF().nuc_grad_method().hcore_generator(mol)
+        _check_hcore_deriv_fd(self, mol, hcore_deriv, [(0, 2), (1, 1), (2, 0)])
+        # repeated calls for the same atom return the same matrix
+        self.assertAlmostEqual(abs(hcore_deriv(1) - hcore_deriv(1)).max(), 0, 14)
+
+    def test_gth_pp_hcore_generator_ghost_atom(self):
+        mol = gto.M(atom='N 0 0 0.1; H 0 1.8 -0.6; H 1.6 -0.9 -0.6; ghost-H -1.6 -0.9 -0.6',
+                    basis='gth-szv', pseudo='gth-pade', spin=1, unit='B', verbose=0)
+        hcore_deriv = mol.RHF().nuc_grad_method().hcore_generator(mol)
+        _check_hcore_deriv_fd(self, mol, hcore_deriv, [(0, 2), (2, 0), (3, 1)])
+
+def _check_hcore_deriv_fd(test, mol, hcore_deriv, displacements):
+    '''Compare hcore_deriv with finite differences of get_hcore'''
+    numpy.random.seed(2)
+    dm = numpy.random.rand(mol.nao, mol.nao)
+    coords = mol.atom_coords()
+    for ia, x in displacements:
+        e = []
+        for d in (1e-4, -1e-4):
+            c = coords.copy()
+            c[ia,x] += d
+            h = mol.set_geom_(c, unit='B', inplace=False).RHF().get_hcore()
+            e.append(numpy.einsum('ij,ij', h, dm))
+        de = numpy.einsum('ij,ij', hcore_deriv(ia)[x], dm)
+        test.assertAlmostEqual(de, (e[0] - e[1]) / 2e-4, 7)
+
 def grad_nuc(mol):
     gs = numpy.zeros((mol.natm,3))
     for j in range(mol.natm):

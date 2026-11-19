@@ -206,6 +206,21 @@ class KnownValues(unittest.TestCase):
         self.assertAlmostEqual(lib.fp(g), -0.07887074405221786, 6)
 
 
+    def test_tda_gth_pp_finite_diff(self):
+        mol = gto.M(atom='N 0 0 0.1; H 0 1.8 -0.6; H 1.6 -0.9 -0.6; H -1.6 -0.9 -0.6',
+                    basis='gth-szv', pseudo='gth-pade', unit='B', verbose=0)
+        def tda(mol):
+            mf = scf.RHF(mol).run(conv_tol=1e-12)
+            return mf.TDA().run(nstates=3, conv_tol=1e-10)
+        g = tda(mol).nuc_grad_method().kernel(state=1)
+        coords = mol.atom_coords()
+        e = []
+        for d in (1e-4, -1e-4):
+            c = coords.copy()
+            c[0,2] += d
+            e.append(tda(mol.set_geom_(c, unit='B', inplace=False)).e_tot[0])
+        self.assertAlmostEqual(g[0,2], (e[0] - e[1]) / 2e-4, 5)
+
 if __name__ == "__main__":
     print("Full Tests for TD-RHF gradients")
     unittest.main()

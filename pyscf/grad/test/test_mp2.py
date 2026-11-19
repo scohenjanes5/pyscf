@@ -199,6 +199,19 @@ class KnownValues(unittest.TestCase):
         self.assertAlmostEqual(abs(g1 - g_ref).max(), 0, 9)
 
 
+    def test_gth_pp_finite_diff(self):
+        mol = gto.M(atom='N 0 0 0.1; H 0 1.8 -0.6; H 1.6 -0.9 -0.6; H -1.6 -0.9 -0.6',
+                    basis='gth-szv', pseudo='gth-pade', unit='B', verbose=0)
+        mp_scanner = scf.RHF(mol).set(conv_tol=1e-12).apply(mp.MP2).as_scanner()
+        g = mp_scanner.nuc_grad_method().as_scanner()(mol)[1]
+        coords = mol.atom_coords()
+        e = []
+        for d in (1e-4, -1e-4):
+            c = coords.copy()
+            c[1,1] += d
+            e.append(mp_scanner(mol.set_geom_(c, unit='B', inplace=False)))
+        self.assertAlmostEqual(g[1,1], (e[0] - e[1]) / 2e-4, 6)
+
 if __name__ == "__main__":
     print("Tests for MP2 gradients")
     unittest.main()

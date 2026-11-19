@@ -51,12 +51,7 @@ def grad_elec(mf_grad, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
 
     dme0 = mf_grad.make_rdm1e(mo_energy, mo_coeff, mo_occ)
 
-    if mol._pseudo:
-        from pyscf.gto.pp_int import vpploc_nuc_grad, vppnl_nuc_grad
-        de = vpploc_nuc_grad(mol, dm0)
-        de += vppnl_nuc_grad(mol, dm0)
-    else:
-        de = numpy.zeros((mol.natm, 3))
+    de = numpy.zeros((mol.natm, 3))
 
     t0 = (logger.process_clock(), logger.perf_counter())
     log.debug('Computing Gradients of NR-HF Coulomb repulsion')
@@ -119,12 +114,8 @@ def get_hcore(mol):
     '''Part of the nuclear gradients of core Hamiltonian'''
     h = mol.intor('int1e_ipkin', comp=3)
     if mol._pseudo:
-        from pyscf.pbc.gto.pseudo import pp_int
-        from pyscf.df import incore
-        fakemol = pp_int.fake_cell_vloc(mol, 0)
-        charges = fakemol.atom_charges()
-        v = incore.aux_e2(mol, fakemol, 'int3c2e_ip1', comp=3)
-        h += numpy.einsum('xpqi,i->xpq', v, -charges)
+        from pyscf.gto.pp_int import get_gth_pp_ip1
+        h += get_gth_pp_ip1(mol)
     else:
         h += mol.intor('int1e_ipnuc', comp=3)
     if mol.has_ecp():
@@ -145,10 +136,7 @@ def hcore_generator(mf, mol=None):
             ecp_atoms = ()
 
         if mol._pseudo:
-            from pyscf.pbc.gto.pseudo import pp_int
-            from pyscf.df import incore
-            fakemol = pp_int.fake_cell_vloc(mol, 0)
-            v = incore.aux_e2(mol, fakemol, 'int3c2e_ip1', comp=3).transpose(3,0,1,2)
+            from pyscf.gto.pp_int import get_gth_pp_ip1
 
         charges = -mol.atom_charges()
         aoslices = mol.aoslice_by_atom()
@@ -157,10 +145,11 @@ def hcore_generator(mf, mol=None):
             shl0, shl1, p0, p1 = aoslices[atm_id]
             with mol.with_rinv_at_nucleus(atm_id):
                 if mol._pseudo:
-                    vrinv = v[atm_id]
+                    # local (erf and part2) and nonlocal PP of this atom
+                    vrinv = get_gth_pp_ip1(mol, atm_id)
                 else:
                     vrinv = mol.intor('int1e_iprinv', comp=3) # <\nabla|1/r|>
-                vrinv *= charges[atm_id]
+                    vrinv *= charges[atm_id]
                 if with_ecp and atm_id in ecp_atoms:
                     vrinv += mol.intor('ECPscalar_iprinv', comp=3)
             vrinv[:,p0:p1] += h1[:,p0:p1]

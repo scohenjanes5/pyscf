@@ -117,12 +117,7 @@ def grad_elec(mf_grad, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
 
     dm_j, dm_k = _spin_block_dms(dm0)
 
-    if mol._pseudo:
-        from pyscf.gto.pp_int import vpploc_nuc_grad, vppnl_nuc_grad
-        de = vpploc_nuc_grad(mol, dm0_sf)
-        de += vppnl_nuc_grad(mol, dm0_sf)
-    else:
-        de = numpy.zeros((mol.natm, 3))
+    de = numpy.zeros((mol.natm, 3))
 
     t0 = (logger.process_clock(), logger.perf_counter())
     log.debug('Computing Gradients of NR-GHF Coulomb repulsion')

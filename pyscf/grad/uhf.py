@@ -50,12 +50,7 @@ def grad_elec(mf_grad, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
     dm0_sf = dm0[0] + dm0[1]
     dme0_sf = dme0[0] + dme0[1]
 
-    if mol._pseudo:
-        from pyscf.gto.pp_int import vpploc_nuc_grad, vppnl_nuc_grad
-        de = vpploc_nuc_grad(mol, dm0_sf)
-        de += vppnl_nuc_grad(mol, dm0_sf)
-    else:
-        de = numpy.zeros((mol.natm, 3))
+    de = numpy.zeros((mol.natm, 3))
 
     t0 = (logger.process_clock(), logger.perf_counter())
     log.debug('Computing Gradients of NR-UHF Coulomb repulsion')

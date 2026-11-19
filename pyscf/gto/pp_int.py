@@ -83,6 +83,73 @@ def _int_vnl(mol, fakemol, hl_blocks, intors, comp=None):
     fakemol._bas = _bas
     return ppnl_half
 
+def get_gth_pp_ip1(mol, atm_id=None):
+    '''Derivative of the bra AO of the GTH pseudo potential matrix,
+    <\\nabla p|V_PP|q>, shape (3, nao, nao).
+
+    Without atm_id this is the PP counterpart of mol.intor('int1e_ipnuc').
+    With atm_id, only the PP terms centered on those atoms are included, the
+    counterpart of mol.intor('int1e_iprinv') * -Z inside
+    mol.with_rinv_at_nucleus(atm_id).
+    '''
+    from pyscf.pbc.gto.pseudo import pp_int
+    from pyscf.df import incore
+    if atm_id is None:
+        atm_id = np.arange(mol.natm)
+    atm_id = np.asarray(atm_id).ravel()
+    nao = mol.nao
+    h = np.zeros((3, nao, nao))
+
+    # Local part. cn=0 is the erf term (get_pp_loc_part1), cn=1..4 are part2
+    intors = ('int3c2e_ip1', 'int3c1e_ip1', 'int3c1e_ip1_r2_origk',
+              'int3c1e_ip1_r4_origk', 'int3c1e_ip1_r6_origk')
+    for cn in range(5):
+        fakemol = pp_int.fake_cell_vloc(mol, cn, atm_id)
+        if fakemol.nbas > 0:
+            v = incore.aux_e2(mol, fakemol, intors[cn], aosym='s1', comp=3)
+            if cn == 0:
+                charges = fakemol.atom_charges()[fakemol._bas[:,ATOM_OF]]
+                h -= np.einsum('xpqi,i->xpq', v, charges)
+            else:
+                h += v.sum(axis=-1)
+            v = None
+
+    # Nonlocal part
+    fakemol, hl_blocks = pp_int.fake_cell_vnl(mol)
+    mask = np.isin(fakemol._bas[:,ATOM_OF], atm_id)
+    fakemol._bas = fakemol._bas[mask]
+    hl_blocks = [hl for hl, m in zip(hl_blocks, mask) if m]
+    for ia, dppnl in _ppnl_ip1_by_block(mol, fakemol, hl_blocks):
+        h += dppnl
+    return h
+
+def _ppnl_ip1_by_block(mol, fakemol, hl_blocks):
+    '''Yields (atom id, <\\nabla p|V_nl|q>) for each projector block of
+    fake_cell_vnl'''
+    if len(hl_blocks) == 0:
+        return
+    ppnl_half = _int_vnl(mol, fakemol, hl_blocks,
+                         ('int1e_ovlp', 'int1e_r2_origi', 'int1e_r4_origi'))
+    ppnl_half_ip2 = _int_vnl(
+        mol, fakemol, hl_blocks,
+        ('int1e_ipovlp', 'int1e_r2_origi_ip2', 'int1e_r4_origi_ip2'), comp=3)
+    # int1e_ipovlp computes ip1 so multiply -1 to get ip2
+    ppnl_half_ip2[0] *= -1
+
+    nao = mol.nao
+    offset = [0] * 3
+    for ib, hl in enumerate(hl_blocks):
+        nd = 2 * fakemol.bas_angular(ib) + 1
+        hl_dim = hl.shape[0]
+        ilp = np.empty((hl_dim, nd, nao))
+        dilp = np.empty((hl_dim, 3, nd, nao))
+        for i in range(hl_dim):
+            p0 = offset[i]
+            ilp[i] = ppnl_half[i][p0:p0+nd]
+            dilp[i] = ppnl_half_ip2[i][:,p0:p0+nd]
+            offset[i] = p0 + nd
+        yield fakemol._bas[ib,ATOM_OF], lib.einsum('idlp,ij,jlq->dpq', dilp, hl, ilp)
+
 def vpploc_nuc_grad(mol, dm):
     '''
     Nuclear gradients of the local part (part2) of the GTH pseudo potential,
@@ -94,8 +161,8 @@ def vpploc_nuc_grad(mol, dm):
     from pyscf.pbc.gto.cell import rcut_by_shells
     from pyscf.pbc.df.incore import int3c1e_nuc_grad
 
-    # The gradients of get_pp_loc_part1(mol) are computed in grad.rhf.get_hcore
-    # and grad.rhf.hcore_generator
+    # The gradients of get_pp_loc_part1(mol) are not included. The gradients
+    # of the full PP matrix are available from grad.rhf.hcore_generator
 
     intors = ('int3c2e_ip1', 'int3c1e_ip1', 'int3c1e_ip1_r2_origk',
               'int3c1e_ip1_r4_origk', 'int3c1e_ip1_r6_origk')
@@ -134,15 +201,6 @@ def vppnl_nuc_grad(mol, dm):
     from pyscf.pbc.gto.pseudo import pp_int
     assert dm.ndim == 2
     fakemol, hl_blocks = pp_int.fake_cell_vnl(mol)
-    ppnl_half = _int_vnl(mol, fakemol, hl_blocks,
-                         ('int1e_ovlp', 'int1e_r2_origi', 'int1e_r4_origi'))
-    ppnl_half_ip2 = _int_vnl(
-        mol, fakemol, hl_blocks,
-        ('int1e_ipovlp', 'int1e_r2_origi_ip2', 'int1e_r4_origi_ip2'), comp=3)
-
-    # int1e_ipovlp computes ip1 so multiply -1 to get ip2
-    if len(ppnl_half_ip2[0]) > 0:
-        ppnl_half_ip2[0] *= -1
 
     # dppnl below is the derivative of the bra only. Contract it with
     # dm + dm.T (bra and ket) so that dm need not be symmetric.
@@ -152,25 +210,8 @@ def vppnl_nuc_grad(mol, dm):
     grad = np.zeros((mol.natm, 3))
     nao = dm.shape[-1]
     dppnl = np.zeros((3, nao, nao))
-    offset = [0] * 3
-    for ib, hl in enumerate(hl_blocks):
-        l = fakemol.bas_angular(ib)
-        nd = 2 * l + 1
-        hl_dim = hl.shape[0]
-
-        ilp = np.empty((hl_dim, nd, nao))
-        dilp = np.empty((hl_dim, 3, nd, nao))
-        for i in range(hl_dim):
-            p0 = offset[i]
-            if len(ppnl_half[i]) > 0:
-                ilp[i] = ppnl_half[i][p0:p0+nd]
-                dilp[i] = ppnl_half_ip2[i][:,p0:p0+nd]
-            offset[i] = p0 + nd
-
-        dppnl_i = lib.einsum('idlp,ij,jlq->dpq', dilp, hl, ilp)
+    for i_pp_atom, dppnl_i in _ppnl_ip1_by_block(mol, fakemol, hl_blocks):
         dppnl += dppnl_i
-
-        i_pp_atom = fakemol._bas[ib, 0]
         grad[i_pp_atom] += np.einsum('dpq,qp->d', dppnl_i, dm)
 
     aoslices = mol.aoslice_by_atom()
