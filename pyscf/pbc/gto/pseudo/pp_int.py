@@ -475,6 +475,54 @@ def get_pp_nl(cell, kpts=None):
     return ppnl
 
 
+def _ppnl_nuc_grad_gamma(cell, fakecell, hl_blocks, ppnl_half, ppnl_half_ip2, dm):
+    '''Gamma-point part of vppnl_nuc_grad, evaluated with matrix products.
+
+    dm must be real and symmetric (bra plus ket). With I_i = <p_i|mu> the
+    projector-AO integrals of level i, dI_i their derivatives with respect to
+    the projector centre and W_i = sum_j h_ij I_j dm,
+
+        grad[A] = sum_{p on A} sum_mu dI_i[p,mu] W_i[p,mu]
+                - sum_{mu on A} sum_p dI_i[p,mu] W_i[p,mu]
+
+    since moving an AO is the negative of moving the projector it overlaps.
+    '''
+    grad = numpy.zeros((cell.natm, 3))
+    nlevels = sum(len(x) > 0 for x in ppnl_half)
+    if nlevels == 0:
+        return grad
+    ilp = [ppnl_half[i][0].real for i in range(nlevels)]
+    dilp = [ppnl_half_ip2[i][0].real for i in range(nlevels)]
+    ilp_dm = [x.dot(dm) for x in ilp]
+
+    # W_i and the atom of each projector row, in fakecell basis order
+    w = [numpy.empty_like(x) for x in ilp_dm]
+    proj_atom = [numpy.empty(len(x), dtype=int) for x in ilp]
+    offset = [0] * nlevels
+    for ib, hl in enumerate(hl_blocks):
+        nd = 2 * fakecell.bas_angular(ib) + 1
+        rows = []
+        for i in range(hl.shape[0]):
+            rows.append(slice(offset[i], offset[i] + nd))
+            offset[i] += nd
+        for i, ri in enumerate(rows):
+            w[i][ri] = sum(hl[i,j] * ilp_dm[j][rj] for j, rj in enumerate(rows))
+            proj_atom[i][ri] = fakecell._bas[ib,0]
+
+    dw_ao = numpy.zeros((3, cell.nao))
+    for i in range(nlevels):
+        dw = dilp[i] * w[i]
+        for x in range(3):
+            grad[:,x] += numpy.bincount(proj_atom[i], dw[x].sum(axis=1),
+                                        minlength=cell.natm)
+        dw_ao += dw.sum(axis=1)
+
+    aoslices = cell.aoslice_by_atom()
+    for ia, (p0, p1) in enumerate(aoslices[:,2:]):
+        grad[ia] -= dw_ao[:,p0:p1].sum(axis=1)
+    return grad
+
+
 def vppnl_nuc_grad(cell, dm, kpts=None):
     '''
     Nuclear gradients of the non-local part of the GTH pseudo potential,
@@ -495,14 +543,11 @@ def vppnl_nuc_grad(cell, dm, kpts=None):
             ppnl_half_ip2[0][k] *= -1
 
     if gamma_point(kpts_lst):
-        # The C kernel differentiates the bra only and assumes a symmetric dm.
-        # Pass dm + dm.T (bra and ket) so that any dm is handled.
-        dm = numpy.asarray(dm).real
-        dm = dm + dm.swapaxes(-1, -2)
-        grad = _contract_ppnl_nuc_grad(cell, fakecell, dm, hl_blocks,
-                                       ppnl_half, ppnl_half_ip2, kpts=kpts)
-        grad *= -1
-        return grad
+        nao = cell.nao
+        dm = numpy.asarray(dm).real.reshape(nao, nao)
+        dm = dm + dm.T # bra and ket
+        return _ppnl_nuc_grad_gamma(cell, fakecell, hl_blocks,
+                                    ppnl_half, ppnl_half_ip2, dm)
 
     nkpts = len(kpts_lst)
     nao = cell.nao_nr()
