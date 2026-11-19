@@ -188,6 +188,11 @@ def vpploc_part2_nuc_grad(cell, dm, kpts=None):
     intors = ('int3c2e_ip1', 'int3c1e_ip1', 'int3c1e_ip1_r2_origk',
               'int3c1e_ip1_r4_origk', 'int3c1e_ip1_r6_origk')
 
+    # int3c1e_nuc_grad differentiates the bra only. Contract it with
+    # dm + dm.T (bra and ket) so that dm need not be symmetric.
+    dm = numpy.asarray(dm).real
+    dm = dm + dm.swapaxes(-1, -2)
+
     Ls = cell.get_lattice_Ls()
     count = 0
     grad = 0
@@ -205,7 +210,7 @@ def vpploc_part2_nuc_grad(cell, dm, kpts=None):
             buf = None
             count += 1
             free_neighbor_list(neighbor_list)
-    grad *= -2
+    grad *= -1
     return grad
 
 

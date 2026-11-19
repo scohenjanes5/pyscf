@@ -105,6 +105,11 @@ def vpploc_nuc_grad(mol, dm):
     as_cell.get_lattice_Ls = lambda *args: Ls
     as_cell.precision = 1e-12
 
+    # int3c1e_nuc_grad differentiates the bra only. Contract it with
+    # dm + dm.T (bra and ket) so that dm need not be symmetric.
+    dm = np.asarray(dm).real
+    dm = dm + dm.T
+
     grad = np.zeros((mol.natm, 3))
     rcut = as_cell.rcut_by_shells()
     for cn in range(1, 5):
@@ -116,7 +121,7 @@ def vpploc_nuc_grad(mol, dm):
             grad += int3c1e_nuc_grad(
                 as_cell, fakecell, dm, intors[cn], neighbor_list=neighbor_list)
             free_neighbor_list(neighbor_list)
-    grad *= -2
+    grad *= -1
     return grad
 
 def vppnl_nuc_grad(mol, dm):
