@@ -167,6 +167,9 @@ def vpploc_part1_nuc_grad(mydf, dm, kpts=np.zeros((1,3)), atm_id=None, precision
     comp = 3
 
     if mydf.rhoG is None:
+        # The density depends only on the hermitian part of dm
+        dm = np.asarray(dm)
+        dm = (dm + dm.swapaxes(-1,-2).conj()) * .5
         rhoG = _eval_rhoG(mydf, dm, hermi=1, kpts=kpts, deriv=0)
     else:
         rhoG = mydf.rhoG

@@ -905,6 +905,8 @@ def get_nuc_nuc_grad(mydf, dm, kpts=None):
     cell = mydf.cell
     mesh = mydf.mesh
     dms = _format_dms(dm, kpts)
+    # The density depends only on the hermitian part of dm
+    dms = (dms + dms.swapaxes(-1,-2).conj()) * .5
 
     Gv = cell.get_Gv(mesh)
     coulG = tools.get_coulG(cell, mesh=mesh, Gv=Gv)

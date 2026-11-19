@@ -270,6 +270,24 @@ class KnownValues(unittest.TestCase):
         g = vpploc_part1_nuc_grad(mf._numint, mf.make_rdm1())
         assert abs(g).max() < 1e-8
 
+    def test_vpploc_part1_nuc_grad_nonsymmetric_dm(self):
+        # only the symmetric part of dm contributes to the density
+        np.random.seed(5)
+        ni = MultiGridNumInt(cell_orth)
+        dm0 = np.random.random((cell_orth.nao, cell_orth.nao))
+        g = ni.vpploc_part1_nuc_grad(dm0, kpts=np.zeros((1,3)))
+        g0 = ni.vpploc_part1_nuc_grad((dm0 + dm0.T) * .5, kpts=np.zeros((1,3)))
+        assert abs(g - g0).max() < 1e-10
+
+    def test_nuc_nuc_grad_nonsymmetric_dm(self):
+        # only the symmetric part of dm contributes to the density
+        np.random.seed(6)
+        ni = MultiGridNumInt(mol)
+        dm0 = np.random.random((mol.nao, mol.nao))
+        g = ni.get_nuc_nuc_grad(dm0)
+        g0 = ni.get_nuc_nuc_grad((dm0 + dm0.T) * .5)
+        assert abs(g - g0).max() < 1e-10
+
     def test_mol_rks(self):
         mf = dft.RKS(mol, xc='lda,vwn')
         mf._numint = multigrid.MultiGridNumInt2(mol)
