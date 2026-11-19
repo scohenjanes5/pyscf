@@ -137,6 +137,11 @@ def vppnl_nuc_grad(mol, dm):
     if len(ppnl_half_ip2[0]) > 0:
         ppnl_half_ip2[0] *= -1
 
+    # dppnl below is the derivative of the bra only. Contract it with
+    # dm + dm.T (bra and ket) so that dm need not be symmetric.
+    dm = np.asarray(dm).real
+    dm = dm + dm.T
+
     grad = np.zeros((mol.natm, 3))
     nao = dm.shape[-1]
     dppnl = np.zeros((3, nao, nao))
@@ -165,5 +170,4 @@ def vppnl_nuc_grad(mol, dm):
     for ia in range(mol.natm):
         p0, p1 = aoslices[ia,2:]
         grad[ia] -= np.einsum('dpq,qp->d', dppnl[:,p0:p1,:], dm[:,p0:p1])
-    grad *= 2
     return grad
